@@ -3,39 +3,48 @@
 use crate::token::{tokenize, Token};
 use crate::TokenType;
 
-use std::collections::HashMap;
-use std::mem;
-use std::rc::Rc;
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    mem,
+    path::{self, Path},
+    rc::Rc,
+};
 
-pub fn preprocess(tokens: Vec<Token>, ctx: &mut Preprocessor) -> Vec<Token> {
+pub fn preprocess<'a, T: Display>(
+    tokens: Vec<Token<'a, T>>,
+    ctx: &mut Preprocessor<'a, T>,
+) -> Vec<Token<'a, T>> {
     ctx.preprocess_impl(tokens)
 }
 
 #[derive(Clone)]
-pub struct Env {
-    input: Vec<Token>,
-    output: Vec<Token>,
+pub struct Env<'a, T> {
+    input: Vec<Token<'a, T>>,
+    output: Vec<Token<'a, T>>,
     pos: usize,
-    next: Option<Box<Env>>,
+    next: Option<Box<Self>>,
 }
 
-impl Default for Env {
-    fn default() -> Env {
-        Env {
-            input: vec![],
-            output: vec![],
-            pos: 0,
-            next: None,
-        }
-    }
-}
+// impl<T> Default for Env<T> {
+//     fn default() -> Self {
+//         Env {
+//             input: vec![],
+//             output: vec![],
+//             pos: 0,
+//             next: None,
+//         }
+//     }
+// }
 
-impl Env {
-    pub fn new(input: Vec<Token>, next: Option<Box<Env>>) -> Self {
+impl<'a, T: Display> Env<'a, T> {
+    pub fn new(input: Vec<Token<'a, T>>, next: Option<Box<Self>>) -> Self {
         Env {
             input,
             next,
-            ..Default::default()
+            pos: 0,
+            output: vec![],
+            // ..Default::default()
         }
     }
 }
@@ -47,12 +56,12 @@ enum MacroType {
 }
 
 #[derive(Debug, Clone)]
-struct Macro {
+struct Macro<'a, T> {
     ty: MacroType,
-    pub tokens: Vec<Token>,
+    pub tokens: Vec<Token<'a, T>>,
 }
 
-impl Macro {
+impl<'a, T: AsRef<Path> + Display> Macro<'a, T> {
     fn new(ty: MacroType) -> Self {
         Macro { ty, tokens: vec![] }
     }
@@ -67,7 +76,8 @@ impl Macro {
                 }
 
                 for i in 0..self.tokens.len() {
-                    let t = &self.tokens[i].clone();
+                    // let t = &self.tokens[i].clone();
+                    let ref t = self.tokens[i];
                     match t.ty {
                         TokenType::Ident(ref name) => {
                             if let Some(n) = map.get(name) {
@@ -75,7 +85,8 @@ impl Macro {
                                     *elem = Token::new(
                                         TokenType::Param(*n),
                                         0,
-                                        t.filename.clone(),
+                                        // t.filename.clone(),
+                                        t.filename,
                                         t.buf.clone(),
                                     );
                                 }
@@ -127,12 +138,12 @@ impl Macro {
     }
 }
 
-pub struct Preprocessor {
-    macros: HashMap<String, Macro>,
-    pub env: Box<Env>,
+pub struct Preprocessor<'a, T> {
+    macros: HashMap<String, Macro<'a, T>>,
+    pub env: Box<Env<'a, T>>,
 }
 
-impl Preprocessor {
+impl<'a, T: Display> Preprocessor<'a, T> {
     pub fn new() -> Self {
         Preprocessor {
             macros: HashMap::new(),
@@ -140,21 +151,22 @@ impl Preprocessor {
         }
     }
 
-    fn next(&mut self) -> Option<Token> {
+    fn next(&mut self) -> Option<Token<T>> {
         if self.eof() {
             return None;
         }
         let pos = self.env.pos;
-        let t = Some(mem::replace(&mut self.env.input[pos], Token::default()));
+        // let t = Some(mem::replace(&mut self.env.input[pos], Token::default()));
         self.env.pos += 1;
-        t
+        // t
+        Some(self.env.input[pos])
     }
 
     fn eof(&self) -> bool {
         self.env.pos == self.env.input.len()
     }
 
-    fn get(&mut self, ty: TokenType, msg: &str) -> Token {
+    fn get(&mut self, ty: TokenType, msg: &str) -> Token<T> {
         let t = self.next().expect(msg);
         if t.ty != ty {
             t.bad_token(msg);
@@ -170,7 +182,7 @@ impl Preprocessor {
         }
     }
 
-    fn peek(&self) -> Option<&Token> {
+    fn peek(&self) -> Option<&Token<T>> {
         self.env.input.get(self.env.pos)
     }
 
@@ -186,7 +198,7 @@ impl Preprocessor {
         true
     }
 
-    fn read_until_eol(&mut self) -> Vec<Token> {
+    fn read_until_eol(&mut self) -> Vec<Token<T>> {
         let mut v = vec![];
         while let Some(t) = self.next() {
             if t.ty == TokenType::NewLine {
@@ -197,7 +209,7 @@ impl Preprocessor {
         v
     }
 
-    fn read_one_arg(&mut self) -> Vec<Token> {
+    fn read_one_arg(&mut self) -> Vec<&Token<T>> {
         let mut v = vec![];
         let msg = "unclosed macro argument";
         let start = self.peek().expect(msg).clone();
@@ -222,7 +234,7 @@ impl Preprocessor {
         start.bad_token(msg);
     }
 
-    fn read_args(&mut self) -> Vec<Vec<Token>> {
+    fn read_args(&mut self) -> Vec<Vec<&Token<T>>> {
         let mut v = vec![];
         if self.consume(TokenType::RightParen) {
             return v;
@@ -235,7 +247,8 @@ impl Preprocessor {
         v
     }
 
-    fn stringize(tokens: &[Token], filename: Rc<String>, buf: Rc<Vec<char>>) -> Token {
+    fn stringize(tokens: &[&Token<T>], filename: T, buf: &'a [char]) -> Token<'a, T> {
+    // fn stringize(tokens: &[Token<T>], filename: T, buf: Rc<Vec<char>>) -> Token<T> {
         let mut sb = String::new();
         for (i, t) in tokens.iter().enumerate() {
             if i != 0 {
@@ -248,12 +261,13 @@ impl Preprocessor {
         Token::new(TokenType::Str(sb, len), 0, filename, buf)
     }
 
-    fn add_special_macro(&mut self, t: &Token) -> bool {
+    fn add_special_macro(&mut self, t: &Token<'a, T>) -> bool {
         if t.is_ident("__LINE__") {
             self.env.output.push(Token::new(
                 TokenType::Num(t.get_line_number() as i32),
                 0,
-                t.filename.clone(),
+                // t.filename.clone(),
+                t.filename,
                 t.buf.clone(),
             ));
             true
@@ -262,7 +276,7 @@ impl Preprocessor {
         }
     }
 
-    fn apply_objlike(&mut self, tokens: Vec<Token>) {
+    fn apply_objlike(&mut self, tokens: Vec<Token<'a, T>>) {
         for t in tokens {
             if self.add_special_macro(&t) {
                 continue;
@@ -272,7 +286,7 @@ impl Preprocessor {
         }
     }
 
-    fn apply_funclike(&mut self, tokens: Vec<Token>, params: &[String], start: &Token) {
+    fn apply_funclike(&mut self, tokens: Vec<&Token<T>>, params: &[String], start: &Token<T>) {
         self.get(TokenType::LeftParen, "comma expected");
         let mut args = self.read_args();
         if params.len() != args.len() {
@@ -299,7 +313,7 @@ impl Preprocessor {
         }
     }
 
-    fn apply(&mut self, m: Macro, start: &Token) {
+    fn apply(&mut self, m: Macro<T>, start: &Token<T>) {
         match m.ty {
             MacroType::Objlike => self.apply_objlike(m.tokens),
             MacroType::Funclike(ref params) => self.apply_funclike(m.tokens, params, start),
@@ -344,8 +358,9 @@ impl Preprocessor {
         self.env.output.append(&mut v);
     }
 
-    fn preprocess_impl(&mut self, tokens: Vec<Token>) -> Vec<Token> {
-        self.env = Box::new(Env::new(tokens, Some(self.env.clone())));
+    fn preprocess_impl(&mut self, tokens: Vec<Token<'a, T>>) -> Vec<Token<'a, T>> {
+        // self.env = Box::new(Env::new(tokens, Some(self.env.clone())));
+        self.env = Box::new(Env::new(tokens, Some(self.env)));
 
         while !self.eof() {
             let t = self.next().unwrap();

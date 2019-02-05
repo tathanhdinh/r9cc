@@ -2,7 +2,7 @@ use crate::token::Token;
 use crate::util::roundup;
 use crate::{Ctype, Scope, TokenType, Type};
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display, path::Path};
 
 // Quoted from 9cc
 // > This is a recursive-descendent parser which constructs abstract
@@ -23,7 +23,7 @@ int main() {     ; +-+                        int   []         2
 }                ; +-+                  return        []      +->primary
                                                                  0
 */
-pub fn parse(tokens: &Vec<Token>) -> Vec<Node> {
+pub fn parse<T: AsRef<Path> + Display>(tokens: Vec<Token<T>>) -> Vec<Node> {
     let mut parser = Parser::new(tokens);
 
     let mut v = vec![];
@@ -169,14 +169,14 @@ impl Type {
     }
 }
 
-pub struct Parser<'a> {
-    tokens: &'a Vec<Token>,
+pub struct Parser<'a, T: AsRef<Path> + Display> {
+    tokens: Vec<Token<'a, T>>,
     pos: usize,
     env: Env,
 }
 
-impl<'a> Parser<'a> {
-    pub fn new(tokens: &'a Vec<Token>) -> Self {
+impl<'a, T: AsRef<Path> + Display> Parser<'a, T> {
+    pub fn new(tokens: Vec<Token<'a, T>>) -> Self {
         Parser {
             tokens,
             pos: 0,
@@ -231,7 +231,7 @@ impl<'a> Parser<'a> {
         true
     }
 
-    fn is_typename(&self, t: &Token) -> bool {
+    fn is_typename(&self, t: &Token<T>) -> bool {
         use self::TokenType::*;
         if let TokenType::Ident(ref name) = t.ty {
             return self.find_typedef(name).is_some();

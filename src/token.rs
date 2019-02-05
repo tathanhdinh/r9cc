@@ -1,18 +1,26 @@
-use crate::preprocess;
-use crate::CharacterType;
-use crate::TokenType;
+use crate::{preprocess, CharacterType, TokenType};
+// use crate::CharacterType;
+// use crate::TokenType;
 
-use std::collections::HashMap;
-use std::fs::File;
-use std::io;
-use std::io::prelude::*;
-use std::rc::Rc;
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    fs::File,
+    io::{BufReader, Read},
+    path::{self, Path},
+    // rc::Rc,
+};
 
-pub fn tokenize(path: String, ctx: &mut preprocess::Preprocessor) -> Vec<Token> {
-    let mut tokenizer = Tokenizer::new(Rc::new(path));
-    tokenizer.canonicalize_newline();
-    tokenizer.remove_backslash_newline();
-    tokenizer.scan(&keyword_map());
+// pub fn tokenize(path: String, ctx: &mut preprocess::Preprocessor) -> Vec<Token> {
+pub fn tokenize<'a, T: AsRef<Path>>(
+    path: T,
+    ctx: &mut preprocess::Preprocessor<T>,
+) -> Vec<Token<'a, T>> {
+    let mut tokenizer = Tokenizer::new(path);
+    // tokenizer.canonicalize_newline();
+    // tokenizer.remove_backslash_newline();
+    // tokenizer.scan(&keyword_map());
+    // tokenizer.scan(&KEYWORD_MAP);
 
     tokenizer.tokens = preprocess::preprocess(tokenizer.tokens, ctx);
     tokenizer.strip_newlines_tokens();
@@ -20,66 +28,94 @@ pub fn tokenize(path: String, ctx: &mut preprocess::Preprocessor) -> Vec<Token> 
     tokenizer.tokens
 }
 
-fn keyword_map() -> HashMap<String, TokenType> {
-    let mut map = HashMap::new();
-    map.insert("_Alignof".into(), TokenType::Alignof);
-    map.insert("break".into(), TokenType::Break);
-    map.insert("char".into(), TokenType::Char);
-    map.insert("void".into(), TokenType::Void);
-    map.insert("do".into(), TokenType::Do);
-    map.insert("else".into(), TokenType::Else);
-    map.insert("extern".into(), TokenType::Extern);
-    map.insert("for".into(), TokenType::For);
-    map.insert("if".into(), TokenType::If);
-    map.insert("int".into(), TokenType::Int);
-    map.insert("return".into(), TokenType::Return);
-    map.insert("sizeof".into(), TokenType::Sizeof);
-    map.insert("struct".into(), TokenType::Struct);
-    map.insert("typedef".into(), TokenType::Typedef);
-    map.insert("while".into(), TokenType::While);
-    map
+lazy_static! {
+    static ref KEYWORD_MAP: HashMap<&'static str, TokenType> = {
+        let mut map = HashMap::new();
+        map.insert("_Alignof", TokenType::Alignof);
+        map.insert("break", TokenType::Break);
+        map.insert("char", TokenType::Char);
+        map.insert("void", TokenType::Void);
+        map.insert("do", TokenType::Do);
+        map.insert("else", TokenType::Else);
+        map.insert("extern", TokenType::Extern);
+        map.insert("for", TokenType::For);
+        map.insert("if", TokenType::If);
+        map.insert("int", TokenType::Int);
+        map.insert("return", TokenType::Return);
+        map.insert("sizeof", TokenType::Sizeof);
+        map.insert("struct", TokenType::Struct);
+        map.insert("typedef", TokenType::Typedef);
+        map.insert("while", TokenType::While);
+        map
+    };
 }
 
+// fn keyword_map() -> HashMap<&'static str, TokenType> {
+//     let mut map = HashMap::new();
+//     map.insert("_Alignof", TokenType::Alignof);
+//     map.insert("break", TokenType::Break);
+//     map.insert("char", TokenType::Char);
+//     map.insert("void", TokenType::Void);
+//     map.insert("do", TokenType::Do);
+//     map.insert("else", TokenType::Else);
+//     map.insert("extern", TokenType::Extern);
+//     map.insert("for", TokenType::For);
+//     map.insert("if", TokenType::If);
+//     map.insert("int", TokenType::Int);
+//     map.insert("return", TokenType::Return);
+//     map.insert("sizeof", TokenType::Sizeof);
+//     map.insert("struct", TokenType::Struct);
+//     map.insert("typedef", TokenType::Typedef);
+//     map.insert("while", TokenType::While);
+//     map
+// }
+
 #[derive(Debug, Clone)]
-pub struct Token {
+pub struct Token<'a, T> {
     pub ty: TokenType, // Token type
 
     // For preprocessor
     pub stringize: bool,
 
     // For error reporting
-    pub buf: Rc<Vec<char>>,
-    pub filename: Rc<String>,
+    // pub buf: Rc<Vec<char>>,
+    pub buf: &'a [char],
+    // pub filename: Rc<String>,
+    pub filename: T,
     pub start: usize,
     pub end: usize,
 }
 
-impl Default for Token {
-    fn default() -> Token {
-        Token {
-            ty: TokenType::Int,
-            buf: Rc::new(vec![]),
-            filename: Rc::new("".to_string()),
-            start: 0,
-            end: 0,
-            stringize: false,
-        }
-    }
-}
+// impl<T: AsRef<Path>> Default for Token<T> {
+//     fn default() -> Self {
+//         Token {
+//             ty: TokenType::Int,
+//             buf: Rc::new(vec![]),
+//             // filename: Rc::new("".to_string()),
+//             filename: Default::default(),
+//             start: 0,
+//             end: 0,
+//             stringize: false,
+//         }
+//     }
+// }
 
-impl Token {
-    pub fn new(ty: TokenType, start: usize, filename: Rc<String>, buf: Rc<Vec<char>>) -> Self {
+impl<'a, T: Display> Token<'a, T> {
+    // pub fn new(ty: TokenType, start: usize, filename: Rc<String>, buf: Rc<Vec<char>>) -> Self {
+    pub fn new(ty: TokenType, start: usize, filename: T, buf: &'a [char]) -> Self {
         Token {
             ty,
+            stringize: false,
             buf,
             filename,
             start,
-            ..Default::default()
+            end: start,
+            // ..Default::default()
         }
     }
 
     pub fn bad_token(&self, msg: &str) -> ! {
-        print_line(&*self.buf, &*self.filename, self.start);
+        print_line(&*self.buf, self.filename, self.start);
         panic!("{}", msg);
     }
 
@@ -139,41 +175,77 @@ lazy_static! {
 }
 
 // Tokenizer
-struct Tokenizer {
-    p: Rc<Vec<char>>,
+struct Tokenizer<'a, T: AsRef<Path>> {
+    // p: Rc<Vec<char>>,
+    p: Box<[char]>,
+    // p: &'a [char],
     pos: usize,
-    tokens: Vec<Token>,
+    tokens: Vec<Token<'a, path::Display<'a>>>,
 
     // Error reporting
-    filename: Rc<String>,
+    // filename: Option<T>,
+    filename: T,
 }
 
-impl Tokenizer {
-    fn new(filename: Rc<String>) -> Self {
+impl<'a, T: AsRef<Path>> Tokenizer<'a, T> {
+    // fn new(filename: Rc<String>) -> Self {
+    fn new(filename: T) -> Self {
+        let read_chars = {
+            let reader = BufReader::new(File::open(filename).expect("Unable to open file"));
+            let mut buffer = String::new();
+            reader
+                .read_to_string(&mut buffer)
+                .expect("Invalid character detected");
+            let lines = buffer.lines().map(|s| s.to_owned()).collect::<Vec<_>>();
+            lines
+                .join("\n")
+                .chars()
+                .collect::<Vec<char>>()
+                .into_boxed_slice()
+            // buffer.split(|p| p == "\r\n")
+            // buffer.chars().collect::<Vec<char>>().into_boxed_slice()
+            // Self::read(reader)
+        };
+
+        // canonicalize newline
+
         Tokenizer {
-            p: Rc::new(Self::read_file(&filename).chars().collect()),
+            p: read_chars,
             filename,
             pos: 0,
+            // tokens: Vec::<Token<'a, path::Display<'a>>>::new(),
             tokens: vec![],
         }
+
+        // Tokenizer {
+        //     p: Rc::new(Self::read_file(filename).chars().collect()),
+        //     filename,
+        //     pos: 0,
+        //     tokens: vec![],
+        // }
     }
 
-    fn read_file(filename: &str) -> String {
-        let mut input = String::new();
-        let mut fp = io::stdin();
-        if filename != &"-".to_string() {
-            let mut fp = File::open(filename).expect("file not found");
-            fp.read_to_string(&mut input)
-                .expect("something went wrong reading the file");
-            return input;
-        }
-        fp.read_to_string(&mut input)
-            .expect("something went wrong reading the file");
-        input
-    }
+    // fn read(input: impl Read) -> Box<[char]> {
+    //     let mut buffer = String::new();
+    //     input.read_to_string(&mut buffer);
+    //     buffer.chars().collect::<Vec<char>>().into_boxed_slice()
 
-    fn new_token(&self, ty: TokenType) -> Token {
-        Token::new(ty, self.pos, self.filename.clone(), self.p.clone())
+    //     // let mut fp = io::stdin();
+    //     // // if filename != &"-".to_string() {
+    //     // if filename != Path::new("-") {
+    //     //     let mut fp = File::open(filename).expect("file not found");
+    //     //     fp.read_to_string(&mut input)
+    //     //         .expect("something went wrong reading the file");
+    //     //     return input;
+    //     // }
+    //     // fp.read_to_string(&mut input)
+    //     //     .expect("something went wrong reading the file");
+    //     // input
+    // }
+
+    fn new_token(&'a self, ty: TokenType) -> Token<'a, path::Display> {
+        // Token::new(ty, self.pos, self.filename, self.p.clone())
+        Token::new(ty, self.pos, self.filename.as_ref().display(), &self.p)
     }
 
     // This does not support non-ASCII characters.
@@ -193,7 +265,10 @@ impl Tokenizer {
         })
     }
 
-    fn scan(&mut self, keywords: &HashMap<String, TokenType>) -> Vec<Token> {
+    fn scan(
+        &'a mut self,
+        keywords: &HashMap<&'static str, TokenType>,
+    ) -> Vec<Token<'a, path::Display>> {
         'outer: while let Some(head_char) = self.get_character(0) {
             match head_char {
                 CharacterType::NewLine => {
@@ -260,7 +335,8 @@ impl Tokenizer {
             }
         }
 
-        self.tokens.clone()
+        // self.tokens.clone()
+        self.tokens
     }
 
     fn line_comment(&mut self) {
@@ -298,7 +374,7 @@ impl Tokenizer {
         }
     }
 
-    fn char_literal(&mut self) {
+    fn char_literal(&'a mut self) {
         self.pos += 1;
         let result: char;
         let c = self.p.get(self.pos).expect("premature end of input");
@@ -326,7 +402,7 @@ impl Tokenizer {
         self.tokens.push(t);
     }
 
-    fn string_literal(&mut self) {
+    fn string_literal(&'a mut self) {
         self.pos += 1;
         let mut sb = String::new();
         let mut len = 0;
@@ -359,7 +435,7 @@ impl Tokenizer {
         }
     }
 
-    fn ident(&mut self, keywords: &HashMap<String, TokenType>) {
+    fn ident(&'a mut self, keywords: &HashMap<&'static str, TokenType>) {
         let mut len = 1;
         while let Some(c2) = self.p.get(self.pos + len) {
             if c2.is_alphabetic() || c2.is_ascii_digit() || c2 == &'_' {
@@ -371,7 +447,7 @@ impl Tokenizer {
 
         let name: String = self.p[self.pos..self.pos + len].iter().collect();
         let mut t;
-        if let Some(keyword) = keywords.get(&name) {
+        if let Some(keyword) = keywords.get(name.as_str()) {
             t = self.new_token(keyword.clone());
         } else {
             t = self.new_token(TokenType::Ident(name.clone()));
@@ -381,7 +457,7 @@ impl Tokenizer {
         self.tokens.push(t);
     }
 
-    fn number(&mut self) {
+    fn number(&'a mut self) {
         match self.p.get(self.pos..self.pos + 2) {
             Some(&['0', 'x']) | Some(&['0', 'X']) => {
                 self.pos += 2;
@@ -394,7 +470,7 @@ impl Tokenizer {
         }
     }
 
-    fn parse_number(&mut self, base: u32) {
+    fn parse_number(&'a mut self, base: u32) {
         let mut sum: i32 = 0;
         let mut len = 0;
         for c in self.p[self.pos..].iter() {
@@ -411,58 +487,61 @@ impl Tokenizer {
         self.tokens.push(t);
     }
 
-    fn canonicalize_newline(&mut self) {
-        let mut pos = 0;
-        while pos < self.p.len() {
-            if self.p[pos] == '\r' && self.p[pos + 1] == '\n' {
-                Rc::get_mut(&mut self.p).unwrap().remove(pos);
-                Rc::get_mut(&mut self.p).unwrap().remove(pos);
-            }
-            pos += 1;
-        }
-    }
+    // fn canonicalize_newline(&mut self) {
+    //     let mut pos = 0;
+    //     while pos < self.p.len() {
+    //         if self.p[pos] == '\r' && self.p[pos + 1] == '\n' {
+    //             Rc::get_mut(&mut self.p).unwrap().remove(pos);
+    //             Rc::get_mut(&mut self.p).unwrap().remove(pos);
+    //         }
+    //         pos += 1;
+    //     }
+    // }
 
     // Quoted from 9cc
     // > Concatenates continuation lines. We keep the total number of
     // > newline characters the same to keep the line counter sane.
-    fn remove_backslash_newline(&mut self) {
-        let mut pos = 0;
-        let mut cnt = 0;
-        while pos < self.p.len() {
-            if self.p[pos] == '\\' && self.p[pos + 1] == '\n' {
-                cnt += 1;
-                Rc::get_mut(&mut self.p).unwrap().remove(pos);
-                Rc::get_mut(&mut self.p).unwrap().remove(pos);
-                pos += 1;
-            } else if self.p[pos] == '\n' {
-                for _ in 0..cnt {
-                    Rc::get_mut(&mut self.p).unwrap().insert(pos, '\n');
-                    pos += 1;
-                }
-                pos += 1;
-                cnt = 0;
-            } else {
-                pos += 1;
-            }
-        }
-    }
+    // fn remove_backslash_newline(&mut self) {
+    //     let mut pos = 0;
+    //     let mut cnt = 0;
+    //     while pos < self.p.len() {
+    //         if self.p[pos] == '\\' && self.p[pos + 1] == '\n' {
+    //             cnt += 1;
+    //             Rc::get_mut(&mut self.p).unwrap().remove(pos);
+    //             Rc::get_mut(&mut self.p).unwrap().remove(pos);
+    //             pos += 1;
+    //         } else if self.p[pos] == '\n' {
+    //             for _ in 0..cnt {
+    //                 Rc::get_mut(&mut self.p).unwrap().insert(pos, '\n');
+    //                 pos += 1;
+    //             }
+    //             pos += 1;
+    //             cnt = 0;
+    //         } else {
+    //             pos += 1;
+    //         }
+    //     }
+    // }
 
-    fn append(&mut self, x_str: &str, y_str: &str, start: usize) -> Token {
+    fn append(&'a mut self, x_str: &str, y_str: &str, start: usize) -> Token<'a, path::Display> {
         let concated = format!("{}{}", x_str, y_str);
         let l = concated.len() + 1; // Because `+1` has `\0`.
         Token::new(
             TokenType::Str(concated, l),
             start,
-            self.filename.clone(),
-            self.p.clone(),
+            // self.filename.clone(),
+            self.filename.as_ref().display(),
+            // self.p.clone(),
+            &self.p,
         )
     }
 
-    fn join_string_literals(&mut self) {
+    fn join_string_literals(&'a mut self) {
         let mut v = vec![];
-        let mut last_may: Option<Token> = None;
+        let mut last_may: Option<Token<'a, path::Display>> = None;
 
-        for t in self.tokens.clone().into_iter() {
+        // for t in self.tokens.clone().into_iter() {
+        for t in self.tokens.into_iter() {
             if let Some(ref last) = last_may {
                 if let (TokenType::Str(ref last_str, _), TokenType::Str(ref t_str, _)) =
                     (&last.ty, &t.ty)
@@ -474,7 +553,8 @@ impl Tokenizer {
                 }
             }
 
-            last_may = Some(t.clone());
+            // last_may = Some(t.clone());
+            last_may = Some(t);
             v.push(t);
         }
         self.tokens = v;
@@ -483,21 +563,22 @@ impl Tokenizer {
     fn strip_newlines_tokens(&mut self) {
         self.tokens = self
             .tokens
-            .clone()
+            // .clone()
             .into_iter()
             .filter(|t| t.ty != TokenType::NewLine)
             .collect()
     }
 
     fn bad_position(&self, msg: &'static str) {
-        print_line(&self.p, &self.filename, self.pos);
+        // print_line(&self.p, &self.filename, self.pos);
+        print_line(&self.p, self.filename.as_ref().display(), self.pos);
         panic!(msg);
     }
 }
 
 // Finds a line pointed by a given pointer from the input file
 // to print it out.
-fn print_line(buf: &[char], path: &str, pos: usize) {
+fn print_line<T: Display>(buf: &[char], path: T, pos: usize) {
     let mut p = 0;
     let mut start = 0;
     let mut line = 0;
